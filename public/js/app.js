@@ -1,581 +1,707 @@
-/* ═══════════════════════════════════════════════════════════════
-   FIFA WORLD CUP 2026 PREDICTOR — FRONTEND
-   ═══════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════
+   FIFA WC 2026 PREDICTOR — Frontend
+   ══════════════════════════════════════════════════════ */
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let currentUser  = null;
-let allMatches   = [];
-let activeStage  = 'All';
+let currentUser = null;
+let allMatches  = [];
+let activeStage = 'Group Stage';
+let activeGroup = 'A';
+let adminStage  = 'Group Stage';
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-function getToken()  { return localStorage.getItem('wc2026_token'); }
-function saveAuth(token, user) {
-  localStorage.setItem('wc2026_token', token);
-  localStorage.setItem('wc2026_user',  JSON.stringify(user));
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function getToken() { return localStorage.getItem('wc_token'); }
+function setAuth(token, user) {
+  localStorage.setItem('wc_token', token);
+  localStorage.setItem('wc_user', JSON.stringify(user));
   currentUser = user;
 }
 function clearAuth() {
-  localStorage.removeItem('wc2026_token');
-  localStorage.removeItem('wc2026_user');
+  localStorage.removeItem('wc_token');
+  localStorage.removeItem('wc_user');
   currentUser = null;
 }
 function loadAuth() {
-  const token = getToken();
-  const raw   = localStorage.getItem('wc2026_user');
-  if (token && raw) { currentUser = JSON.parse(raw); }
+  const t = getToken(), u = localStorage.getItem('wc_user');
+  if (t && u) try { currentUser = JSON.parse(u); } catch {}
 }
 
-// ── API helper ────────────────────────────────────────────────────────────────
-async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (getToken()) headers['Authorization'] = 'Bearer ' + getToken();
-  const r = await fetch('/api' + path, { ...options, headers });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || 'Request failed');
-  return data;
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const h = { 'Content-Type': 'application/json' };
+  if (getToken()) h['Authorization'] = 'Bearer ' + getToken();
+  const r = await fetch('/api' + path, { ...opts, headers: h });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-let toastTimer;
-function toast(msg, isError = false) {
+let _tt;
+function toast(msg, isErr = false) {
   const el = document.getElementById('toast');
   el.textContent = msg;
-  el.className   = 'show' + (isError ? ' error' : '');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 3200);
+  el.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(_tt);
+  _tt = setTimeout(() => el.className = '', 3200);
+}
+
+// ── Escape HTML ───────────────────────────────────────────────────────────────
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday:'short', month:'short', day:'numeric',
+    hour:'2-digit', minute:'2-digit'
+  });
+}
+
+function isOpen(matchTime) {
+  return Date.now() < new Date(matchTime).getTime() - 3_600_000;
+}
+
+function resultLabel(m, result) {
+  if (result === 'home') return esc(m.home_team) + ' Win';
+  if (result === 'away') return esc(m.away_team) + ' Win';
+  return 'Draw';
+}
+
+// ── Navbar ────────────────────────────────────────────────────────────────────
+function updateNav() {
+  const li = !!currentUser;
+  const el = id => document.getElementById(id);
+  el('nb-login').classList.toggle('hidden', li);
+  el('nb-register').classList.toggle('hidden', li);
+  el('nb-logout').classList.toggle('hidden', !li);
+  el('nb-mine').classList.toggle('hidden', !li);
+  el('nb-admin').classList.toggle('hidden', !(li && currentUser.is_admin));
+  el('navUser').classList.toggle('hidden', !li);
+  el('navUser').textContent = li ? '👤 ' + currentUser.display_name : '';
+  document.getElementById('heroBtns') &&
+    (document.getElementById('heroBtns').innerHTML = li
+      ? `<button class="btn-red" onclick="nav('matches')">⚽ Predict Now</button>
+         <button class="btn-ghost" onclick="nav('mine')">My Predictions</button>`
+      : `<button class="btn-red" onclick="nav('register')">🚀 Join & Predict</button>
+         <button class="btn-ghost" onclick="nav('matches')">View Schedule</button>`);
+}
+
+function toggleBurger() {
+  document.getElementById('navLinks').classList.toggle('open');
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-function showView(name) {
-  document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
-  document.getElementById('view-' + name).style.display = '';
+const VIEWS = ['home','matches','leaderboard','mine','admin','login','register'];
 
-  // Active nav highlight
-  document.querySelectorAll('.nav-btn[id^="nav-"]').forEach(b => b.classList.remove('active'));
-  const nb = document.getElementById('nav-' + name);
+function nav(name) {
+  VIEWS.forEach(v => {
+    document.getElementById('v-' + v).classList.toggle('hidden', v !== name);
+  });
+  document.querySelectorAll('.nb[id^="nb-"]').forEach(b => b.classList.remove('active'));
+  const nb = document.getElementById('nb-' + name);
   if (nb) nb.classList.add('active');
+  document.getElementById('navLinks').classList.remove('open');
 
-  // Lazy-load view data
-  if (name === 'home')        loadHome();
-  if (name === 'matches')     loadMatches();
-  if (name === 'leaderboard') loadLeaderboard();
-  if (name === 'mypreds')     loadMyPreds();
-  if (name === 'admin')       loadAdminMatches();
+  if (name === 'home')        renderHome();
+  if (name === 'matches')     renderMatches();
+  if (name === 'leaderboard') renderLeaderboard();
+  if (name === 'mine')        renderMine();
+  if (name === 'admin')       renderAdmin();
 }
 
-function updateNavbar() {
-  const loggedIn = !!currentUser;
-  document.getElementById('nav-login').style.display    = loggedIn ? 'none' : '';
-  document.getElementById('nav-register').style.display = loggedIn ? 'none' : '';
-  document.getElementById('nav-logout').style.display   = loggedIn ? '' : 'none';
-  document.getElementById('nav-mypreds').style.display  = loggedIn ? '' : 'none';
-  document.getElementById('nav-admin').style.display    = (loggedIn && currentUser.is_admin) ? '' : 'none';
-  document.getElementById('navUser').textContent        = loggedIn ? '👤 ' + currentUser.display_name : '';
-  document.getElementById('heroRegister').style.display = loggedIn ? 'none' : '';
+// ── SSE live updates ──────────────────────────────────────────────────────────
+function initSSE() {
+  const es = new EventSource('/api/live-stream');
+  es.addEventListener('matchUpdate', e => {
+    const updated = JSON.parse(e.data);
+    const idx = allMatches.findIndex(m => m.id === updated.id);
+    if (idx !== -1) {
+      // preserve user's prediction fields
+      allMatches[idx] = { ...allMatches[idx], ...updated };
+    }
+    // Re-render if on a page that shows matches
+    const active = VIEWS.find(v => !document.getElementById('v-'+v).classList.contains('hidden'));
+    if (active === 'matches') renderMatchList();
+    if (active === 'home')    renderHome();
+    if (active === 'admin')   renderAdmin();
+  });
+  es.onerror = () => setTimeout(initSSE, 5000); // reconnect on error
 }
-
-// ── AUTH ──────────────────────────────────────────────────────────────────────
-async function doLogin() {
-  const username = document.getElementById('loginUsername').value.trim();
-  const password = document.getElementById('loginPassword').value;
-  const errEl    = document.getElementById('loginError');
-  errEl.classList.remove('visible');
-  try {
-    const data = await api('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password })
-    });
-    saveAuth(data.token, data.user);
-    updateNavbar();
-    toast('Welcome back, ' + data.user.display_name + '!');
-    showView('home');
-  } catch (e) {
-    errEl.textContent = e.message;
-    errEl.classList.add('visible');
-  }
-}
-
-async function doRegister() {
-  const display_name = document.getElementById('regDisplayName').value.trim();
-  const username     = document.getElementById('regUsername').value.trim();
-  const email        = document.getElementById('regEmail').value.trim();
-  const password     = document.getElementById('regPassword').value;
-  const errEl        = document.getElementById('registerError');
-  errEl.classList.remove('visible');
-  try {
-    const data = await api('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ display_name, username, email, password })
-    });
-    saveAuth(data.token, data.user);
-    updateNavbar();
-    toast('Account created! Welcome, ' + data.user.display_name + '!');
-    showView('matches');
-  } catch (e) {
-    errEl.textContent = e.message;
-    errEl.classList.add('visible');
-  }
-}
-
-function logout() {
-  clearAuth();
-  updateNavbar();
-  showView('home');
-  toast('Logged out.');
-}
-
-// Keyboard submit for auth forms
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Enter') return;
-  const active = document.querySelector('.view:not([style*="display: none"])');
-  if (active?.id === 'view-login')    doLogin();
-  if (active?.id === 'view-register') doRegister();
-});
 
 // ── HOME ──────────────────────────────────────────────────────────────────────
-async function loadHome() {
+async function renderHome() {
   try {
-    const [matches, leaders] = await Promise.all([
-      api('/matches'),
-      api('/predictions/leaderboard')
-    ]);
+    const [matches, board] = await Promise.all([api('/matches'), api('/predictions/leaderboard')]);
     allMatches = matches;
 
-    // Stats
     document.getElementById('statMatches').textContent   = matches.length;
-    document.getElementById('statFinished').textContent  = matches.filter(m => m.status === 'finished').length;
-    document.getElementById('statPredictors').textContent = leaders.length;
+    document.getElementById('statPredictors').textContent = board.length;
 
-    // Mini leaderboard (top 5)
-    const tbody = document.getElementById('homeLeaderboard');
-    if (!leaders.length) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1rem">Be the first to predict!</td></tr>';
+    // Mini leaderboard
+    const boardEl = document.getElementById('homeBoard');
+    if (!board.length) {
+      boardEl.innerHTML = '<div class="empty"><span class="ei">🏆</span>No predictions yet — be the first!</div>';
     } else {
-      tbody.innerHTML = leaders.slice(0, 5).map((p, i) => `
-        <tr class="${currentUser && p.id === currentUser.id ? 'you-row' : ''}">
-          <td>${rankMedal(i + 1)}</td>
-          <td>${esc(p.display_name)} ${currentUser && p.id === currentUser.id ? '<span style="color:var(--gold);font-size:.75rem">(you)</span>' : ''}</td>
+      const medals = ['🥇','🥈','🥉'];
+      boardEl.innerHTML = `<table class="lb-table"><thead><tr>
+        <th>#</th><th>Player</th><th style="text-align:right">Pts</th><th style="text-align:right">Exact</th>
+      </tr></thead><tbody>${
+        board.slice(0,5).map((p,i) => `<tr class="${currentUser && p.id===currentUser.id?'you':''}">
+          <td class="rank-cell">${medals[i]||i+1}</td>
+          <td>${esc(p.display_name)}${currentUser&&p.id===currentUser.id?' <small class="gold">(you)</small>':''}</td>
           <td class="pts-cell" style="text-align:right">${p.total_points}</td>
-          <td style="text-align:right;color:var(--muted)">${p.exact_scores}</td>
-        </tr>
-      `).join('');
+          <td style="text-align:right;color:var(--gold)">${p.exact_scores}</td>
+        </tr>`).join('')
+      }</tbody></table>`;
     }
 
-    // Upcoming matches (next 4)
-    const upcoming = matches.filter(m => m.status === 'upcoming').slice(0, 4);
-    const upEl = document.getElementById('homeUpcoming');
-    if (!upcoming.length) {
-      upEl.innerHTML = '<p style="color:var(--muted)">No upcoming matches.</p>';
-    } else {
-      upEl.innerHTML = upcoming.map(m => renderMatchCard(m, false)).join('');
-    }
-  } catch (e) {
-    console.error(e);
-  }
+    // Next 3 upcoming matches
+    const upcoming = matches.filter(m => m.status === 'upcoming').slice(0, 3);
+    const nextEl   = document.getElementById('homeNext');
+    nextEl.innerHTML = upcoming.length
+      ? upcoming.map(m => matchCard(m, false)).join('')
+      : '<div class="empty">No upcoming matches.</div>';
+
+  } catch (e) { console.error(e); }
 }
 
 // ── MATCHES ───────────────────────────────────────────────────────────────────
-async function loadMatches() {
+async function renderMatches() {
   try {
     allMatches = await api('/matches');
-    buildStageFilter();
+    buildStageTabs();
     renderMatchList();
   } catch (e) {
-    document.getElementById('matchesList').innerHTML = `<p style="color:var(--muted)">${e.message}</p>`;
+    document.getElementById('matchList').innerHTML = `<div class="empty">${e.message}</div>`;
   }
 }
 
-function buildStageFilter() {
-  const stages = ['All', ...new Set(allMatches.map(m => m.stage))];
-  document.getElementById('stageFilter').innerHTML = stages.map(s => `
-    <button class="filter-btn ${s === activeStage ? 'active' : ''}" onclick="filterStage('${s}')">${s}</button>
-  `).join('');
+function buildStageTabs() {
+  const stages = [...new Set(allMatches.map(m => m.stage))];
+  document.getElementById('stageTabs').innerHTML = stages.map(s =>
+    `<button class="tab${s===activeStage?' active':''}" onclick="setStage('${esc(s)}')">${esc(s)}</button>`
+  ).join('');
+
+  // Group sub-tabs only for Group Stage
+  const groupTabsEl = document.getElementById('groupTabs');
+  if (activeStage === 'Group Stage') {
+    const groups = [...new Set(allMatches.filter(m=>m.stage==='Group Stage').map(m=>m.group_name).filter(Boolean))].sort();
+    groupTabsEl.classList.remove('hidden');
+    groupTabsEl.innerHTML = ['All',...groups].map(g =>
+      `<button class="tab${g===activeGroup?' active':''}" onclick="setGroup('${g}')">${g==='All'?'All Groups':'Group '+g}</button>`
+    ).join('');
+  } else {
+    groupTabsEl.classList.add('hidden');
+  }
 }
 
-function filterStage(stage) {
-  activeStage = stage;
-  buildStageFilter();
+function setStage(s) {
+  activeStage = s;
+  if (s === 'Group Stage' && activeGroup !== 'All') {
+    // keep group selection
+  } else {
+    activeGroup = 'All';
+  }
+  buildStageTabs();
+  renderMatchList();
+}
+
+function setGroup(g) {
+  activeGroup = g;
+  buildStageTabs();
   renderMatchList();
 }
 
 function renderMatchList() {
-  const filtered = activeStage === 'All' ? allMatches : allMatches.filter(m => m.stage === activeStage);
-  const el = document.getElementById('matchesList');
-  if (!filtered.length) {
-    el.innerHTML = '<div class="empty-state"><div class="icon">⚽</div><p>No matches found.</p></div>';
-    return;
+  let filtered = allMatches.filter(m => m.stage === activeStage || activeStage === 'All');
+  if (activeStage === 'Group Stage' && activeGroup !== 'All') {
+    filtered = filtered.filter(m => m.group_name === activeGroup);
   }
-  el.innerHTML = filtered.map(m => renderMatchCard(m, true)).join('');
+  const el = document.getElementById('matchList');
+  el.innerHTML = filtered.length
+    ? filtered.map(m => matchCard(m, true)).join('')
+    : '<div class="empty"><span class="ei">⚽</span>No matches found.</div>';
 }
 
-// ── MATCH CARD ────────────────────────────────────────────────────────────────
-function renderMatchCard(m, expandable) {
-  const kickoff  = new Date(m.match_time);
-  const lockAt   = new Date(kickoff.getTime() - 60 * 60 * 1000);
-  const now      = new Date();
-  const isOpen   = m.status !== 'finished' && now < lockAt;
-  const isLocked = m.status !== 'finished' && now >= lockAt;
+// ── Match card renderer ───────────────────────────────────────────────────────
+function matchCard(m, withPredict) {
+  const open   = isOpen(m.match_time);
+  const live   = m.status === 'live';
+  const done   = m.status === 'finished';
+  const locked = !open && !done;
 
-  const stateClass = m.status === 'finished' ? 'finished' : isLocked ? 'locked' : 'open';
+  const stateClass = live ? 'live' : done ? 'done' : locked ? 'locked' : 'open';
 
-  const scoreDisplay = m.status === 'finished'
-    ? `${m.home_score ?? '–'} – ${m.away_score ?? '–'}`
-    : 'vs';
+  const scoreHtml = live
+    ? `<div class="mc-score">
+         <div class="mc-score-num">${m.home_score ?? 0}–${m.away_score ?? 0}</div>
+         <div class="mc-score-lbl"><span class="live-badge"><span class="live-dot"></span>LIVE</span></div>
+       </div>`
+    : done
+    ? `<div class="mc-score">
+         <div class="mc-score-num">${m.home_score}–${m.away_score}</div>
+         <div class="mc-score-lbl">Final</div>
+       </div>`
+    : `<div class="mc-score">
+         <div class="mc-score-num" style="font-size:.85rem;color:var(--muted)">${fmtTime(m.match_time).split(',').slice(1).join(',').trim()}</div>
+         <div class="mc-score-lbl">vs</div>
+       </div>`;
 
-  const groupLabel = m.group_name ? `Group ${m.group_name} · ` : '';
-  const stageLabel = `${groupLabel}${m.stage}`;
-
-  let predBadge = '';
-  if (m.predicted_result) {
-    if (m.status === 'finished') {
-      const actualResult = m.home_score > m.away_score ? 'home' : m.away_score > m.home_score ? 'away' : 'draw';
-      const resultCorrect = m.predicted_result === actualResult;
-      const exactCorrect  = m.predicted_home_score === m.home_score && m.predicted_away_score === m.away_score;
-      if (exactCorrect) {
-        predBadge = `<span class="prediction-badge badge-correct">⭐ Exact score! +5 pts</span>`;
-      } else if (resultCorrect) {
-        predBadge = `<span class="prediction-badge badge-correct">✓ Correct result +3 pts</span>`;
-      } else {
-        predBadge = `<span class="prediction-badge badge-wrong">✗ Wrong prediction</span>`;
-      }
-    } else {
-      const resLabel = { home: `${esc(m.home_team)} win`, draw: 'Draw', away: `${esc(m.away_team)} win` }[m.predicted_result];
-      const scoreLabel = m.predicted_home_score != null
+  let predHtml = '';
+  if (withPredict) {
+    if (m.predicted_result) {
+      const resLbl = resultLabel(m, m.predicted_result);
+      const scoreLbl = m.predicted_home_score != null
         ? ` · ${m.predicted_home_score}–${m.predicted_away_score}` : '';
-      predBadge = `<span class="prediction-badge badge-pending">🎯 ${resLabel}${scoreLabel}</span>`;
+      if (done) {
+        const pts = m.points_earned;
+        if (pts === 5)
+          predHtml = `<span class="pred-badge pb-exact">⭐ Exact score +5 pts</span>`;
+        else if (pts === 3)
+          predHtml = `<span class="pred-badge pb-correct">✅ Correct result +3 pts</span>`;
+        else
+          predHtml = `<span class="pred-badge pb-wrong">❌ Wrong prediction</span>`;
+      } else {
+        predHtml = `<span class="pred-badge pb-pending">🎯 ${esc(resLbl)}${esc(scoreLbl)}</span>`;
+      }
     }
+
+    let actionHtml = '';
+    if (!currentUser) {
+      actionHtml = `<span class="lock-note" onclick="nav('login')" style="cursor:pointer;color:var(--brand2)">🔐 Sign in to predict</span>`;
+    } else if (done) {
+      actionHtml = '';
+    } else if (!open) {
+      actionHtml = `<span class="lock-note">🔒 Locked</span>`;
+    } else {
+      actionHtml = `<button class="predict-btn" onclick="openPredModal(${m.id})">${m.predicted_result ? '✏️ Edit Pick' : '🎯 Predict'}</button>`;
+    }
+
+    predHtml = `<div class="mc-pred">${predHtml || '<span></span>'}${actionHtml}</div>`;
   }
 
-  const predictSection = expandable && currentUser && isOpen ? `
-    <div class="predict-form" id="pf-${m.id}">
-      <div class="result-btns">
-        <button class="result-btn home ${m.predicted_result === 'home' ? 'selected home' : ''}"
-          onclick="selectResult(${m.id},'home')" id="rb-${m.id}-home">🏠 ${esc(m.home_team)}</button>
-        <button class="result-btn draw ${m.predicted_result === 'draw' ? 'selected draw' : ''}"
-          onclick="selectResult(${m.id},'draw')" id="rb-${m.id}-draw">⚖️ Draw</button>
-        <button class="result-btn away ${m.predicted_result === 'away' ? 'selected away' : ''}"
-          onclick="selectResult(${m.id},'away')" id="rb-${m.id}-away">✈️ ${esc(m.away_team)}</button>
-      </div>
-      <div class="score-inputs">
-        <label>Score (optional):</label>
-        <span style="font-size:.85rem;color:var(--muted)">${esc(m.home_team)}</span>
-        <input class="score-input" type="number" min="0" max="30" id="hs-${m.id}"
-          value="${m.predicted_home_score ?? ''}" placeholder="0" onchange="syncResult(${m.id})" />
-        <span class="score-sep">–</span>
-        <input class="score-input" type="number" min="0" max="30" id="as-${m.id}"
-          value="${m.predicted_away_score ?? ''}" placeholder="0" onchange="syncResult(${m.id})" />
-        <span style="font-size:.85rem;color:var(--muted)">${esc(m.away_team)}</span>
-      </div>
-      <button class="predict-submit" onclick="submitPrediction(${m.id})" id="ps-${m.id}">
-        ${m.predicted_result ? 'Update Prediction' : 'Save Prediction'}
-      </button>
-    </div>
-  ` : expandable && isLocked && !m.predicted_result && currentUser ? `
-    <div class="predict-form">
-      <div class="lock-notice">🔒 Prediction window closed for this match</div>
-    </div>
-  ` : expandable && !currentUser && isOpen ? `
-    <div class="predict-form">
-      <div class="lock-notice" style="color:var(--brand-light)">
-        <a onclick="showView('login')" style="cursor:pointer;color:var(--brand-light)">Sign in</a>&nbsp;to predict this match
-      </div>
-    </div>
-  ` : '';
-
-  const timeStr = kickoff.toLocaleString(undefined, {
+  const grpLabel = m.group_name ? `Group ${m.group_name} · ` : '';
+  const dateStr  = new Date(m.match_time).toLocaleString(undefined, {
     weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
   });
-  const lockStr = isOpen
-    ? `<span class="countdown">🔒 Locks ${lockAt.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>`
-    : '';
 
-  return `
-    <div class="match-card ${stateClass}">
-      <div class="match-header">
-        <div>
-          <div class="match-stage">${esc(stageLabel)}</div>
-          <div class="match-time">${timeStr} ${lockStr}</div>
-          <div class="match-venue">${esc(m.venue)}</div>
-        </div>
-        ${m.status === 'finished' ? '<span style="color:#22c55e;font-size:.8rem;font-weight:700">FINAL</span>' : ''}
-      </div>
-      <div class="match-teams">
-        <div class="team">
-          <div class="team-flag">${m.home_flag}</div>
-          <div class="team-name">${esc(m.home_team)}</div>
-        </div>
-        <div class="team-score">${scoreDisplay}</div>
-        <div class="team away">
-          <div class="team-flag">${m.away_flag}</div>
-          <div class="team-name">${esc(m.away_team)}</div>
-        </div>
-      </div>
-      ${predBadge}
-      ${predictSection}
+  return `<div class="match-card ${stateClass}" id="mc-${m.id}">
+    <div class="mc-head">
+      <span class="mc-stage">${esc(grpLabel + m.stage)}</span>
+      <span>${esc(dateStr)}</span>
+      <span class="mc-venue">${esc(m.venue)}</span>
     </div>
+    <div class="mc-teams">
+      <div class="mc-team">
+        <span class="mc-flag">${m.home_flag}</span>
+        <span class="mc-name">${esc(m.home_team)}</span>
+      </div>
+      ${scoreHtml}
+      <div class="mc-team away">
+        <span class="mc-flag">${m.away_flag}</span>
+        <span class="mc-name">${esc(m.away_team)}</span>
+      </div>
+    </div>
+    ${predHtml}
+  </div>`;
+}
+
+// ── PREDICTION MODAL ──────────────────────────────────────────────────────────
+let _predMatchId = null;
+let _selResult   = null;
+
+function openPredModal(matchId) {
+  const m = allMatches.find(x => x.id === matchId);
+  if (!m) return;
+  _predMatchId = matchId;
+  _selResult   = m.predicted_result || null;
+
+  const existing = m.predicted_result;
+  const exHS = m.predicted_home_score;
+  const exAS = m.predicted_away_score;
+
+  document.getElementById('predModalContent').innerHTML = `
+    <div class="modal-match">
+      <div class="modal-teams">
+        <div class="modal-team"><div class="modal-flag">${m.home_flag}</div><div class="modal-name">${esc(m.home_team)}</div></div>
+        <div class="modal-vs">vs</div>
+        <div class="modal-team"><div class="modal-flag">${m.away_flag}</div><div class="modal-name">${esc(m.away_team)}</div></div>
+      </div>
+      <div class="modal-meta">📍 ${esc(m.venue)}<br/>🕐 ${fmtTime(m.match_time)}</div>
+    </div>
+
+    <div class="modal-err" id="predErr"></div>
+
+    <div class="result-label">Step 1 — Pick a result *</div>
+    <div class="result-btns">
+      <button class="rb${existing==='home'?' sel-home':''}" id="rb-home" onclick="selResult('home')">
+        ${m.home_flag}<br/>${esc(m.home_team)}<br/><small>Win</small>
+      </button>
+      <button class="rb${existing==='draw'?' sel-draw':''}" id="rb-draw" onclick="selResult('draw')">
+        ⚖️<br/>Draw
+      </button>
+      <button class="rb${existing==='away'?' sel-away':''}" id="rb-away" onclick="selResult('away')">
+        ${m.away_flag}<br/>${esc(m.away_team)}<br/><small>Win</small>
+      </button>
+    </div>
+
+    <div class="score-label">Step 2 — Predict exact score <span class="gold">(+2 bonus)</span></div>
+    <div class="score-hint">Optional but earns extra points if correct!</div>
+    <div class="score-row">
+      <span class="score-team-lbl">${esc(m.home_team)}</span>
+      <input class="score-inp" type="number" min="0" max="20" id="hsInp"
+        value="${exHS != null ? exHS : ''}" placeholder="—" oninput="syncResultFromScore()"/>
+      <span class="score-sep">–</span>
+      <input class="score-inp" type="number" min="0" max="20" id="asInp"
+        value="${exAS != null ? exAS : ''}" placeholder="—" oninput="syncResultFromScore()"/>
+      <span class="score-team-lbl right">${esc(m.away_team)}</span>
+    </div>
+    <button class="btn-red full" style="margin-top:.75rem" onclick="submitPred()">
+      ${existing ? '✅ Update Prediction' : '🎯 Save Prediction'}
+    </button>
+    ${existing ? `<button class="btn-gray full" style="margin-top:.5rem" onclick="clearPred(${m.id})">Remove my prediction</button>` : ''}
   `;
+
+  document.getElementById('predModal').classList.remove('hidden');
 }
 
-// ── Prediction interactions ───────────────────────────────────────────────────
-const selectedResults = {};
+function closePredModal(e) {
+  if (e && e.target !== document.getElementById('predModal')) return;
+  document.getElementById('predModal').classList.add('hidden');
+  _predMatchId = null;
+}
 
-function selectResult(matchId, result) {
-  selectedResults[matchId] = result;
-  ['home','draw','away'].forEach(r => {
-    const btn = document.getElementById(`rb-${matchId}-${r}`);
-    if (!btn) return;
-    btn.className = `result-btn ${r}` + (r === result ? ` selected ${r}` : '');
+function selResult(r) {
+  _selResult = r;
+  ['home','draw','away'].forEach(x => {
+    const b = document.getElementById('rb-' + x);
+    if (!b) return;
+    b.className = 'rb' + (x === r ? ` sel-${x}` : '');
   });
-  // Sync score inputs if there's a score set that contradicts new result
-  syncScoreFromResult(matchId, result);
-}
-
-function syncScoreFromResult(matchId, result) {
-  const hs = document.getElementById(`hs-${matchId}`);
-  const as_ = document.getElementById(`as-${matchId}`);
-  if (!hs || !as_) return;
-  const h = parseInt(hs.value, 10);
-  const a = parseInt(as_.value, 10);
-  if (isNaN(h) || isNaN(a)) return;
-  // Clear score if it contradicts the selected result
-  const implied = h > a ? 'home' : a > h ? 'away' : 'draw';
-  if (implied !== result) {
-    hs.value = '';
-    as_.value = '';
+  // If score is filled, check consistency
+  const h = document.getElementById('hsInp')?.value;
+  const a = document.getElementById('asInp')?.value;
+  if (h !== '' && a !== '') {
+    const hn = parseInt(h), an = parseInt(a);
+    if (!isNaN(hn) && !isNaN(an)) {
+      const imp = hn > an ? 'home' : an > hn ? 'away' : 'draw';
+      if (imp !== r) {
+        document.getElementById('hsInp').value = '';
+        document.getElementById('asInp').value = '';
+      }
+    }
   }
 }
 
-function syncResult(matchId) {
-  const hs = document.getElementById(`hs-${matchId}`);
-  const as_ = document.getElementById(`as-${matchId}`);
-  if (!hs || !as_) return;
-  const h = parseInt(hs.value, 10);
-  const a = parseInt(as_.value, 10);
-  if (isNaN(h) || isNaN(a)) return;
-  const implied = h > a ? 'home' : a > h ? 'away' : 'draw';
-  selectResult(matchId, implied);
+function syncResultFromScore() {
+  const h = parseInt(document.getElementById('hsInp').value);
+  const a = parseInt(document.getElementById('asInp').value);
+  if (!isNaN(h) && !isNaN(a)) {
+    const r = h > a ? 'home' : a > h ? 'away' : 'draw';
+    selResult(r);
+  }
 }
 
-async function submitPrediction(matchId) {
-  const match = allMatches.find(m => m.id === matchId);
-  const result = selectedResults[matchId] || match?.predicted_result;
-  if (!result) { toast('Please select a result first.', true); return; }
+async function submitPred() {
+  if (!_selResult) {
+    showPredErr('Please select a result first (Step 1).');
+    return;
+  }
+  const h = document.getElementById('hsInp').value;
+  const a = document.getElementById('asInp').value;
+  const hScore = h !== '' ? parseInt(h) : null;
+  const aScore = a !== '' ? parseInt(a) : null;
 
-  const hs = document.getElementById(`hs-${matchId}`);
-  const as_ = document.getElementById(`as-${matchId}`);
-  const hScore = hs?.value !== '' ? parseInt(hs.value, 10) : null;
-  const aScore = as_?.value !== '' ? parseInt(as_.value, 10) : null;
-
-  const btn = document.getElementById(`ps-${matchId}`);
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  if ((hScore == null) !== (aScore == null)) {
+    showPredErr('Enter both home and away score, or leave both empty.');
+    return;
+  }
 
   try {
     await api('/predictions', {
       method: 'POST',
       body: JSON.stringify({
-        match_id: matchId,
-        predicted_result: result,
+        match_id:             _predMatchId,
+        predicted_result:     _selResult,
         predicted_home_score: hScore,
-        predicted_away_score: aScore
-      })
+        predicted_away_score: aScore,
+      }),
     });
-    toast('Prediction saved!');
-    // Refresh data
+    toast('Prediction saved! 🎯');
+    document.getElementById('predModal').classList.add('hidden');
+    // refresh match data
     allMatches = await api('/matches');
     renderMatchList();
   } catch (e) {
-    toast(e.message, true);
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Prediction'; }
+    showPredErr(e.message);
   }
+}
+
+function showPredErr(msg) {
+  const el = document.getElementById('predErr');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function clearPred(matchId) {
+  if (!confirm('Remove your prediction for this match?')) return;
+  // There's no DELETE endpoint — but we can re-submit with flag; simplest: just close
+  toast('To remove a prediction, contact admin.', true);
+  closePredModal();
 }
 
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
-async function loadLeaderboard() {
+async function renderLeaderboard() {
+  const el = document.getElementById('lbCard');
   try {
-    const leaders = await api('/predictions/leaderboard');
-    const tbody = document.getElementById('fullLeaderboard');
-    if (!leaders.length) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:2rem">No predictions yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = leaders.map((p, i) => `
-      <tr class="${currentUser && p.id === currentUser.id ? 'you-row' : ''}">
-        <td>${rankMedal(i + 1)}</td>
-        <td>
-          ${esc(p.display_name)}
-          ${currentUser && p.id === currentUser.id ? '<span style="color:var(--gold);font-size:.75rem"> (you)</span>' : ''}
-          <div style="font-size:.75rem;color:var(--muted)">@${esc(p.username)}</div>
-        </td>
-        <td class="pts-cell" style="text-align:right">${p.total_points}</td>
-        <td style="text-align:right;color:var(--muted)">${p.total_predictions}</td>
-        <td style="text-align:right;color:#22c55e">${p.correct_results}</td>
-        <td style="text-align:right;color:var(--gold)">${p.exact_scores}</td>
-      </tr>
-    `).join('');
-  } catch (e) {
-    document.getElementById('fullLeaderboard').innerHTML = `<tr><td colspan="6">${e.message}</td></tr>`;
-  }
+    const board = await api('/predictions/leaderboard');
+    if (!board.length) { el.innerHTML = '<div class="empty">No predictions yet.</div>'; return; }
+    const medals = ['🥇','🥈','🥉'];
+    el.innerHTML = `<div style="overflow-x:auto"><table class="lb-table">
+      <thead><tr>
+        <th>#</th><th>Player</th>
+        <th style="text-align:right">Points</th>
+        <th style="text-align:right">Predictions</th>
+        <th style="text-align:right">Correct ✅</th>
+        <th style="text-align:right">Exact 🎯</th>
+      </tr></thead>
+      <tbody>${board.map((p,i)=>`
+        <tr class="${currentUser&&p.id===currentUser.id?'you':''}">
+          <td class="rank-cell">${medals[i]||i+1}</td>
+          <td>
+            <strong>${esc(p.display_name)}</strong>${currentUser&&p.id===currentUser.id?' <span class="gold">(you)</span>':''}
+            <div class="muted">@${esc(p.username)}</div>
+          </td>
+          <td class="pts-cell" style="text-align:right">${p.total_points}</td>
+          <td style="text-align:right;color:var(--muted)">${p.total_predictions}</td>
+          <td style="text-align:right;color:var(--green)">${p.correct_results}</td>
+          <td style="text-align:right;color:var(--gold)">${p.exact_scores}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  } catch (e) { el.innerHTML = `<div class="empty">${e.message}</div>`; }
 }
 
-// ── MY PREDICTIONS ────────────────────────────────────────────────────────────
-async function loadMyPreds() {
-  if (!currentUser) { showView('login'); return; }
+// ── MY PICKS ──────────────────────────────────────────────────────────────────
+async function renderMine() {
+  if (!currentUser) { nav('login'); return; }
+  const listEl  = document.getElementById('mineList');
+  const statsEl = document.getElementById('mineStats');
   try {
-    const preds = await api('/predictions/mine');
-    const el = document.getElementById('myPredsList');
-    if (!preds.length) {
-      el.innerHTML = `<div class="empty-state">
-        <div class="icon">🎯</div>
-        <p>No predictions yet.</p>
-        <button class="btn-primary" style="width:auto;padding:.6rem 1.5rem;margin-top:1rem"
-          onclick="showView('matches')">Make your first prediction</button>
+    const rows = await api('/predictions/mine');
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="empty">
+        <span class="ei">🎯</span>
+        No predictions yet.<br/>
+        <button class="btn-red" style="margin-top:1rem" onclick="nav('matches')">Start Predicting</button>
       </div>`;
+      statsEl.innerHTML = '';
       return;
     }
 
-    let totalPts = 0, correct = 0, exact = 0;
-    preds.forEach(p => {
-      totalPts += p.points_earned;
-      if (p.is_scored && p.points_earned >= 3) correct++;
-      if (p.is_scored && p.points_earned === 5) exact++;
-    });
+    const pts  = rows.reduce((s,r) => s + r.points_earned, 0);
+    const corr = rows.filter(r => r.is_scored && r.points_earned >= 3).length;
+    const exct = rows.filter(r => r.is_scored && r.points_earned === 5).length;
+    statsEl.innerHTML = `
+      <div class="stat"><span>${pts}</span><label>Total Points</label></div>
+      <div class="stat"><span>${rows.length}</span><label>Predictions</label></div>
+      <div class="stat"><span style="color:var(--green)">${corr}</span><label>Correct ✅</label></div>
+      <div class="stat"><span style="color:var(--gold)">${exct}</span><label>Exact 🎯</label></div>`;
 
-    el.innerHTML = `
-      <div class="stats-row" style="margin-bottom:1.5rem">
-        <div class="stat-card"><div class="stat-num">${totalPts}</div><div class="stat-lbl">Total Points</div></div>
-        <div class="stat-card"><div class="stat-num">${preds.length}</div><div class="stat-lbl">Predictions</div></div>
-        <div class="stat-card"><div class="stat-num" style="color:#22c55e">${correct}</div><div class="stat-lbl">Correct Results</div></div>
-        <div class="stat-card"><div class="stat-num" style="color:var(--gold)">${exact}</div><div class="stat-lbl">Exact Scores</div></div>
-      </div>
-      ${preds.map(p => renderMyPredCard(p)).join('')}
-    `;
-  } catch (e) {
-    document.getElementById('myPredsList').innerHTML = `<p style="color:var(--muted)">${e.message}</p>`;
-  }
-}
+    listEl.innerHTML = rows.map(r => {
+      const resLbl  = resultLabel(r, r.predicted_result);
+      const scoreLbl= r.predicted_home_score != null
+        ? `${r.predicted_home_score}–${r.predicted_away_score}` : '—';
+      let resultHtml;
+      if (r.status === 'finished') {
+        if (r.points_earned === 5)
+          resultHtml = `<span class="pred-badge pb-exact">⭐ Exact! +5 pts</span>`;
+        else if (r.points_earned === 3)
+          resultHtml = `<span class="pred-badge pb-correct">✅ Correct +3 pts</span>`;
+        else
+          resultHtml = `<span class="pred-badge pb-wrong">❌ Wrong — 0 pts</span>`;
+      } else if (r.status === 'live') {
+        resultHtml = `<span class="pred-badge pb-pending">⚽ In progress…</span>`;
+      } else {
+        resultHtml = `<span class="pred-badge pb-pending">⏳ Pending</span>`;
+      }
 
-function renderMyPredCard(p) {
-  const kickoff  = new Date(p.match_time);
-  const timeStr  = kickoff.toLocaleString(undefined, {
-    weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
-  });
-  const resultLabel = { home: `${esc(p.home_team)} win`, draw: 'Draw', away: `${esc(p.away_team)} win` }[p.predicted_result];
-  const scoreLabel  = p.predicted_home_score != null ? ` · ${p.predicted_home_score}–${p.predicted_away_score}` : '';
+      const finalScore = r.status === 'finished'
+        ? `<strong>${r.home_score}–${r.away_score}</strong>` : '—';
 
-  let statusHTML = '';
-  if (p.status === 'finished') {
-    const actualResult = p.home_score > p.away_score ? 'home' : p.away_score > p.home_score ? 'away' : 'draw';
-    if (p.points_earned === 5) {
-      statusHTML = `<span class="prediction-badge badge-correct">⭐ Exact score! +5 pts</span>`;
-    } else if (p.points_earned === 3) {
-      statusHTML = `<span class="prediction-badge badge-correct">✓ Correct result +3 pts</span>`;
-    } else {
-      statusHTML = `<span class="prediction-badge badge-wrong">✗ Wrong · ${actualResult === 'home' ? esc(p.home_team) : actualResult === 'away' ? esc(p.away_team) : 'Draw'} · ${p.home_score}–${p.away_score}</span>`;
-    }
-  } else {
-    statusHTML = `<span class="prediction-badge badge-pending">⏳ Awaiting result</span>`;
-  }
-
-  return `
-    <div class="match-card ${p.status === 'finished' ? 'finished' : 'locked'}">
-      <div class="match-header">
+      return `<div class="mine-card">
         <div>
-          <div class="match-stage">${esc(p.stage)}${p.group_name ? ' · Group ' + p.group_name : ''}</div>
-          <div class="match-time">${timeStr}</div>
+          <div class="mine-teams">${r.home_flag} ${esc(r.home_team)} vs ${esc(r.away_team)} ${r.away_flag}</div>
+          <div class="mine-meta">${fmtTime(r.match_time)} · ${esc(r.stage)}${r.group_name?' · Group '+r.group_name:''}</div>
+          <div class="mine-pick">Your pick: <strong>${esc(resLbl)}</strong> · Score: <strong>${esc(scoreLbl)}</strong></div>
+          ${r.status==='finished'?`<div class="mine-pick muted">Final: ${finalScore}</div>`:''}
         </div>
-        ${p.status === 'finished' ? `<strong style="color:var(--gold);font-size:1.1rem">${p.points_earned} pts</strong>` : ''}
-      </div>
-      <div class="match-teams">
-        <div class="team"><div class="team-flag">${p.home_flag}</div><div class="team-name">${esc(p.home_team)}</div></div>
-        <div class="team-score">
-          ${p.status === 'finished' ? `${p.home_score}–${p.away_score}` : 'vs'}
+        <div>
+          <div class="mine-pts">${r.status==='finished'?`<span class="${r.points_earned>=3?'gold':'red'}">${r.points_earned}</span> <small style="font-size:.7rem;font-weight:400">pts</small>`:'—'}</div>
+          ${resultHtml}
         </div>
-        <div class="team away"><div class="team-flag">${p.away_flag}</div><div class="team-name">${esc(p.away_team)}</div></div>
-      </div>
-      <div style="margin-top:.5rem">
-        <span style="font-size:.85rem;color:var(--muted)">Your pick: </span>
-        <strong>${resultLabel}${scoreLabel}</strong>
-      </div>
-      ${statusHTML}
-    </div>
-  `;
+      </div>`;
+    }).join('');
+  } catch (e) { listEl.innerHTML = `<div class="empty">${e.message}</div>`; }
 }
 
 // ── ADMIN ─────────────────────────────────────────────────────────────────────
-async function loadAdminMatches() {
-  if (!currentUser?.is_admin) { showView('home'); return; }
+async function renderAdmin() {
+  if (!currentUser?.is_admin) { nav('home'); return; }
   try {
     const matches = await api('/matches');
-    const el = document.getElementById('adminMatchesList');
-    if (!matches.length) { el.innerHTML = '<p>No matches.</p>'; return; }
+    const stages  = [...new Set(matches.map(m => m.stage))];
 
-    el.innerHTML = matches.map(m => `
-      <div class="match-card ${m.status === 'finished' ? 'finished' : ''}">
-        <div class="match-header">
-          <div>
-            <div class="match-stage">${esc(m.stage)}${m.group_name ? ' · Group ' + m.group_name : ''}</div>
-            <div class="match-time">${new Date(m.match_time).toLocaleString()}</div>
-          </div>
-          <span style="font-size:.8rem;color:${m.status === 'finished' ? '#22c55e' : 'var(--muted)'}">
-            ${m.status.toUpperCase()}
-          </span>
-        </div>
-        <div class="match-teams">
-          <div class="team"><div class="team-flag">${m.home_flag}</div><div class="team-name">${esc(m.home_team)}</div></div>
-          <div class="team-score">${m.status === 'finished' ? `${m.home_score}–${m.away_score}` : 'vs'}</div>
-          <div class="team away"><div class="team-flag">${m.away_flag}</div><div class="team-name">${esc(m.away_team)}</div></div>
-        </div>
-        <div class="admin-form">
-          <span style="font-size:.85rem;color:var(--muted)">Set result:</span>
-          <input class="admin-score-input" type="number" min="0" max="30" id="ah-${m.id}" placeholder="H" value="${m.home_score ?? ''}" />
-          <span style="color:var(--muted)">–</span>
-          <input class="admin-score-input" type="number" min="0" max="30" id="aa-${m.id}" placeholder="A" value="${m.away_score ?? ''}" />
-          <button class="btn-admin" onclick="adminSetResult(${m.id})">✓ Save & Score</button>
-          ${m.status === 'finished' ? `<button class="btn-admin btn-reset" onclick="adminReset(${m.id})">↩ Reset</button>` : ''}
-        </div>
-      </div>
-    `).join('');
+    document.getElementById('adminStageTabs').innerHTML = stages.map(s =>
+      `<button class="tab${s===adminStage?' active':''}" onclick="setAdminStage('${esc(s)}')">${esc(s)}</button>`
+    ).join('');
+
+    const filtered = matches.filter(m => m.stage === adminStage);
+    document.getElementById('adminList').innerHTML = filtered.map(m => adminCard(m)).join('');
   } catch (e) {
-    document.getElementById('adminMatchesList').innerHTML = `<p style="color:var(--muted)">${e.message}</p>`;
+    document.getElementById('adminList').innerHTML = `<div class="empty">${e.message}</div>`;
   }
 }
 
-async function adminSetResult(matchId) {
-  const h = parseInt(document.getElementById(`ah-${matchId}`).value, 10);
-  const a = parseInt(document.getElementById(`aa-${matchId}`).value, 10);
-  if (isNaN(h) || isNaN(a)) { toast('Enter both scores.', true); return; }
+function setAdminStage(s) {
+  adminStage = s;
+  renderAdmin();
+}
+
+function adminCard(m) {
+  const statusBadge = m.status === 'live'
+    ? `<span class="live-badge"><span class="live-dot"></span>LIVE</span>`
+    : m.status === 'finished'
+    ? `<span style="color:var(--green);font-size:.75rem;font-weight:700">✅ FINISHED</span>`
+    : `<span style="color:var(--muted);font-size:.75rem">UPCOMING</span>`;
+
+  return `<div class="admin-card">
+    <div class="mc-head">
+      <span class="mc-stage">${esc(m.group_name ? 'Group '+m.group_name+' · ' : '')}${esc(m.stage)}</span>
+      <span>${fmtTime(m.match_time)}</span>
+      ${statusBadge}
+    </div>
+    <div class="mc-teams" style="padding:.5rem 1rem">
+      <div class="mc-team">
+        <span class="mc-flag">${m.home_flag}</span>
+        <span class="mc-name">${esc(m.home_team)}</span>
+      </div>
+      <div class="mc-score">
+        <div class="mc-score-num" style="font-size:1rem">${m.home_score??'—'}–${m.away_score??'—'}</div>
+      </div>
+      <div class="mc-team away">
+        <span class="mc-flag">${m.away_flag}</span>
+        <span class="mc-name">${esc(m.away_team)}</span>
+      </div>
+    </div>
+    <div class="admin-actions">
+      <input class="admin-score" type="number" min="0" max="20" id="ah-${m.id}"
+        value="${m.home_score??''}" placeholder="H"/>
+      <span style="color:var(--muted)">–</span>
+      <input class="admin-score" type="number" min="0" max="20" id="aa-${m.id}"
+        value="${m.away_score??''}" placeholder="A"/>
+      <button class="btn-orange btn-sm" onclick="adminSetLive(${m.id})">📡 Set Live</button>
+      <button class="btn-green btn-sm"  onclick="adminFinish(${m.id})">✅ Final Result</button>
+      ${m.status!=='upcoming'?`<button class="btn-gray btn-sm" onclick="adminReset(${m.id})">↩ Reset</button>`:''}
+    </div>
+  </div>`;
+}
+
+async function adminSetLive(id) {
+  const h = document.getElementById('ah-'+id)?.value;
+  const a = document.getElementById('aa-'+id)?.value;
   try {
-    const r = await api(`/matches/${matchId}/result`, {
-      method: 'PATCH',
+    await api('/matches/'+id+'/live', {
+      method:'PATCH',
+      body: JSON.stringify({
+        home_score: h !== '' ? parseInt(h) : null,
+        away_score: a !== '' ? parseInt(a) : null,
+      })
+    });
+    toast('Match is now LIVE 📡');
+    renderAdmin();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function adminFinish(id) {
+  const h = parseInt(document.getElementById('ah-'+id)?.value);
+  const a = parseInt(document.getElementById('aa-'+id)?.value);
+  if (isNaN(h) || isNaN(a)) { toast('Enter both scores first.', true); return; }
+  try {
+    const r = await api('/matches/'+id+'/result', {
+      method:'PATCH',
       body: JSON.stringify({ home_score: h, away_score: a })
     });
-    toast(`Result saved. ${r.scored} prediction(s) scored.`);
-    loadAdminMatches();
+    toast(`✅ Result saved — ${r.scored} prediction(s) scored!`);
+    renderAdmin();
   } catch (e) { toast(e.message, true); }
 }
 
-async function adminReset(matchId) {
+async function adminReset(id) {
+  if (!confirm('Reset this match to upcoming? Prediction scores will be cleared.')) return;
   try {
-    await api(`/matches/${matchId}/reset`, { method: 'PATCH' });
-    toast('Match reset.');
-    loadAdminMatches();
+    await api('/matches/'+id+'/reset', { method:'PATCH' });
+    toast('Match reset to upcoming.');
+    renderAdmin();
   } catch (e) { toast(e.message, true); }
 }
 
-// ── Utilities ─────────────────────────────────────────────────────────────────
-function esc(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('liUser').value.trim();
+  const password = document.getElementById('liPass').value;
+  const errEl    = document.getElementById('loginErr');
+  errEl.classList.add('hidden');
+  try {
+    const d = await api('/auth/login', { method:'POST', body: JSON.stringify({ username, password }) });
+    setAuth(d.token, d.user);
+    updateNav();
+    toast('Welcome back, ' + d.user.display_name + '! 👋');
+    nav('matches');
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove('hidden');
+  }
 }
 
-function rankMedal(n) {
-  if (n === 1) return '<span class="rank-medal">🥇</span>';
-  if (n === 2) return '<span class="rank-medal">🥈</span>';
-  if (n === 3) return '<span class="rank-medal">🥉</span>';
-  return `<span style="color:var(--muted);font-weight:700">${n}</span>`;
+async function doRegister() {
+  const display_name = document.getElementById('regName').value.trim();
+  const username     = document.getElementById('regUser').value.trim();
+  const email        = document.getElementById('regEmail').value.trim();
+  const password     = document.getElementById('regPass').value;
+  const errEl        = document.getElementById('regErr');
+  errEl.classList.add('hidden');
+  try {
+    const d = await api('/auth/register', { method:'POST', body: JSON.stringify({ display_name, username, email, password }) });
+    setAuth(d.token, d.user);
+    updateNav();
+    toast('Account created! Welcome ' + d.user.display_name + '! ⚽');
+    nav('matches');
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove('hidden');
+  }
 }
+
+function doLogout() {
+  clearAuth();
+  updateNav();
+  nav('home');
+  toast('Logged out.');
+}
+
+// Enter key support on auth forms
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (!document.getElementById('v-login').classList.contains('hidden'))    doLogin();
+  if (!document.getElementById('v-register').classList.contains('hidden')) doRegister();
+  if (!document.getElementById('predModal').classList.contains('hidden'))  submitPred();
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 loadAuth();
-updateNavbar();
-showView('home');
+updateNav();
+initSSE();
+nav('home');
