@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 
 const { syncMatchesFromOpenLigaDb } = require('./routes/matches');
+const pkg = require('./package.json');
 
 const app = express();
 
@@ -13,6 +14,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/matches', require('./routes/matches'));
 app.use('/api/predictions', require('./routes/predictions'));
+app.get('/api/meta', (_req, res) => {
+  res.json({
+    app: pkg.name,
+    version: process.env.RELEASE_VERSION || pkg.version,
+    deployed_at: process.env.RELEASE_DATE || new Date().toISOString()
+  });
+});
 
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
