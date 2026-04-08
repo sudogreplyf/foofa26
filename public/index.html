@@ -41,6 +41,11 @@
 <!-- HOME -->
 <div id="view-home" class="view">
   <div class="hero">
+    <div class="hero-logos">
+      <span class="fifa-logo">FIFA</span>
+      <span class="fifa-logo">FIFA</span>
+      <span class="fifa-logo">FIFA</span>
+    </div>
     <div class="hero-badge">Official Predictor</div>
     <h1>FIFA World Cup <span>2026</span></h1>
     <p>Predict match results &amp; exact scores. Compete with friends on the global leaderboard.</p>
@@ -116,6 +121,28 @@
         </tr></thead>
         <tbody id="fullLeaderboard"><tr><td colspan="6" class="loading-wrap"><div class="spinner"></div></td></tr></tbody>
       </table>
+    </div>
+
+    <div class="section-title">Community Prediction Feed</div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="leaderboard-table">
+        <thead><tr>
+          <th>Player</th><th>Match</th><th>Prediction</th>
+          <th style="text-align:right">Points</th>
+          <th style="text-align:right">Status</th>
+        </tr></thead>
+        <tbody id="communityFeed"><tr><td colspan="5" class="loading-wrap"><div class="spinner"></div></td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="section-title">Prediction Analytics Trends</div>
+    <div class="stats-row" id="analyticsSummary">
+      <div class="stat-card"><div class="stat-num" id="anaTotalPreds">—</div><div class="stat-lbl">Total Predictions</div></div>
+      <div class="stat-card"><div class="stat-num" id="anaPredictors">—</div><div class="stat-lbl">Active Predictors</div></div>
+      <div class="stat-card"><div class="stat-num" id="anaAvgPoints">—</div><div class="stat-lbl">Avg Points/Prediction</div></div>
+    </div>
+    <div class="card">
+      <div id="analyticsTrend" style="display:grid;gap:.6rem"></div>
     </div>
   </div>
 </div>
@@ -203,5 +230,8 @@
 </div>
 
 <script src="/js/app.js"></script>
+<footer class="app-footer">
+  <span id="appVersion">Version —</span>
+</footer>
 </body>
 </html>

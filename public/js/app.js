@@ -4,6 +4,7 @@ let activeStage = 'All';
 let livePollTimer = null;
 const selectedResults = {};
 const lastLiveSnapshot = new Map();
+const consensusCache = new Map();
 
 function getToken() { return localStorage.getItem('wc2026_token'); }
 function saveAuth(token, user) {
@@ -55,6 +56,16 @@ function showView(name) {
   if (name === 'admin') loadAdminMatches();
 
   startLivePolling();
+}
+
+async function loadMeta() {
+  try {
+    const meta = await fetch('/api/meta').then((r) => r.json());
+    const version = `${meta.version || 'n/a'}`;
+    document.getElementById('appVersion').textContent = `Version ${version}`;
+  } catch {
+    document.getElementById('appVersion').textContent = 'Version unavailable';
+  }
 }
 
 function updateNavbar() {
@@ -139,6 +150,7 @@ async function loadHome() {
     }
     blocks.push('<div class="section-title">Next Matches</div>' + (upcoming.length ? upcoming.map((m) => renderMatchCard(m, false)).join('') : '<p style="color:var(--muted)">No upcoming matches available.</p>'));
     upEl.innerHTML = blocks.join('');
+    hydrateVisibleConsensus();
   } catch (e) {
     document.getElementById('homeUpcoming').innerHTML = `<p style="color:var(--accent)">Failed to load matches: ${esc(e.message)}</p>`;
   }
@@ -203,6 +215,7 @@ function renderMatchList() {
   }
 
   el.innerHTML = chunks.join('');
+  hydrateVisibleConsensus();
 }
 
 function renderMatchCard(m, expandable) {
@@ -241,6 +254,7 @@ function renderMatchCard(m, expandable) {
         <span class="score-sep">–</span>
         <input class="score-input" type="number" min="0" max="30" id="as-${m.id}" value="${m.predicted_away_score ?? ''}" onchange="syncResult(${m.id})" />
       </div>
+      <div class="benchmark-pill" id="bench-${m.id}">🤖 Suggested prediction loading...</div>
       <button class="predict-submit" onclick="submitPrediction(${m.id})" id="ps-${m.id}">${m.predicted_result ? 'Update Prediction' : 'Save Prediction'}</button>
     </div>` : '';
 
@@ -262,8 +276,34 @@ function renderMatchCard(m, expandable) {
         <div class="team away"><div class="team-flag">${esc(m.away_flag || '🏳️')}</div><div class="team-name">${esc(m.away_team)}</div></div>
       </div>
       ${predictSection}
+      <div class="consensus-line" id="cons-${m.id}">Community trend loading…</div>
       ${expandable && isLocked && m.status !== 'live' && m.status !== 'finished' ? '<div class="lock-notice">🔒 Prediction window closed</div>' : ''}
     </div>`;
+}
+
+async function hydrateConsensus(matchId) {
+  if (consensusCache.has(matchId)) return renderConsensus(matchId, consensusCache.get(matchId));
+  try {
+    const data = await api(`/predictions/match/${matchId}/consensus`);
+    consensusCache.set(matchId, data);
+    renderConsensus(matchId, data);
+  } catch {
+    const line = document.getElementById(`cons-${matchId}`);
+    if (line) line.textContent = 'Community trend unavailable.';
+  }
+}
+
+function renderConsensus(matchId, data) {
+  const line = document.getElementById(`cons-${matchId}`);
+  const bench = document.getElementById(`bench-${matchId}`);
+  if (line) {
+    const map = Object.fromEntries((data.result_breakdown || []).map((r) => [r.predicted_result, r.picks]));
+    line.textContent = `Community picks → Home: ${map.home || 0}, Draw: ${map.draw || 0}, Away: ${map.away || 0}`;
+  }
+  if (bench && data.suggested_benchmark) {
+    const b = data.suggested_benchmark;
+    bench.textContent = `🤖 Suggested benchmark: ${b.home_score}-${b.away_score} (${b.predicted_result})`;
+  }
 }
 
 function selectResult(matchId, result) {
@@ -299,9 +339,26 @@ async function submitPrediction(matchId) {
 
 async function loadLeaderboard() {
   try {
-    const leaders = await api('/predictions/leaderboard');
+    const [leaders, feed, analytics] = await Promise.all([
+      api('/predictions/leaderboard'),
+      api('/predictions/feed'),
+      api('/predictions/analytics')
+    ]);
     const tbody = document.getElementById('fullLeaderboard');
     tbody.innerHTML = leaders.map((p, i) => `<tr><td>${rankMedal(i + 1)}</td><td>${esc(p.display_name)}<div style="font-size:.75rem;color:var(--muted)">@${esc(p.username)}</div></td><td class="pts-cell" style="text-align:right">${p.total_points}</td><td style="text-align:right;color:var(--muted)">${p.total_predictions}</td><td style="text-align:right;color:#22c55e">${p.correct_results}</td><td style="text-align:right;color:var(--gold)">${p.exact_scores}</td></tr>`).join('');
+
+    const feedBody = document.getElementById('communityFeed');
+    feedBody.innerHTML = feed.length
+      ? feed.slice(0, 20).map((p) => `<tr><td>${esc(p.display_name)}</td><td>${esc(p.home_team)} vs ${esc(p.away_team)}</td><td>${p.predicted_home_score ?? '?'}-${p.predicted_away_score ?? '?'} (${esc(p.predicted_result)})</td><td style="text-align:right">${p.points_earned || 0}</td><td style="text-align:right">${p.is_scored ? 'Scored' : 'Pending'}</td></tr>`).join('')
+      : '<tr><td colspan="5" style="color:var(--muted)">No community predictions yet.</td></tr>';
+
+    document.getElementById('anaTotalPreds').textContent = analytics.summary.total_predictions || 0;
+    document.getElementById('anaPredictors').textContent = analytics.summary.active_predictors || 0;
+    document.getElementById('anaAvgPoints').textContent = analytics.summary.avg_points_per_prediction || 0;
+    const trend = document.getElementById('analyticsTrend');
+    trend.innerHTML = (analytics.daily_trend || [])
+      .map((d) => `<div class="trend-row"><span>${esc(d.day)}</span><span>${d.predictions_count} predictions · ${d.unique_predictors} users</span></div>`)
+      .join('') || '<div style="color:var(--muted)">No trend data yet.</div>';
   } catch (e) {
     document.getElementById('fullLeaderboard').innerHTML = `<tr><td colspan="6">${esc(e.message)}</td></tr>`;
   }
@@ -397,6 +454,13 @@ function startLivePolling() {
   }, 15000);
 }
 
+async function hydrateVisibleConsensus() {
+  document.querySelectorAll('[id^="cons-"]').forEach((el) => {
+    const id = Number(el.id.replace('cons-', ''));
+    if (Number.isFinite(id)) hydrateConsensus(id);
+  });
+}
+
 function esc(s) {
   if (s == null) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -411,3 +475,5 @@ function rankMedal(n) {
 loadAuth();
 updateNavbar();
 showView('home');
+loadMeta();
+setInterval(hydrateVisibleConsensus, 2000);
