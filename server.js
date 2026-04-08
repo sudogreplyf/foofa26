@@ -1,6 +1,8 @@
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
+const cors = require('cors');
+const path = require('path');
+
+const { syncMatchesFromOpenLigaDb } = require('./routes/matches');
 
 const app = express();
 
@@ -8,17 +10,31 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Routes
-app.use('/api/auth',        require('./routes/auth'));
-app.use('/api/matches',     require('./routes/matches'));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/matches', require('./routes/matches'));
 app.use('/api/predictions', require('./routes/predictions'));
 
-// Serve SPA for any unmatched GET
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`⚽  FIFA WC 2026 Predictor running → http://localhost:${PORT}`);
+app.listen(PORT, async () => {
+  console.log(`⚽ FIFA WC Predictor running → http://localhost:${PORT}`);
+
+  try {
+    const result = await syncMatchesFromOpenLigaDb({ initiatedBy: 'startup' });
+    console.log(`✅ External sync complete (${result.upserts} upserts, ${result.rescoredPredictions} rescored).`);
+  } catch (e) {
+    console.warn(`⚠️ Startup sync skipped: ${e.message}`);
+  }
+
+  const syncMs = Number(process.env.EXTERNAL_SYNC_INTERVAL_MS || 120000);
+  setInterval(async () => {
+    try {
+      await syncMatchesFromOpenLigaDb({ initiatedBy: 'interval' });
+    } catch (e) {
+      console.warn(`⚠️ Interval sync failed: ${e.message}`);
+    }
+  }, syncMs);
 });
