@@ -2,6 +2,7 @@ const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
 const sse     = require('./lib/sse');
+const pkg     = require('./package.json');
 
 const app = express();
 app.use(cors());

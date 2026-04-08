@@ -152,4 +152,3 @@ router.patch('/:id/reset', authenticate, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.syncMatchesFromOpenLigaDb = syncMatchesFromOpenLigaDb;
