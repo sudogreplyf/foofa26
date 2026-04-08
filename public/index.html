@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FIFA World Cup 2026 Predictor</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>" />
+</head>
+<body>
+
+<!-- ── NAVBAR ── -->
+<nav class="navbar">
+  <div class="navbar-inner container">
+    <a class="navbar-brand" href="#" onclick="showView('home');return false;">
+      ⚽ <span>WC2026</span> <span style="color:var(--gold)">Predictor</span>
+    </a>
+    <div class="nav-links" id="navLinks">
+      <button class="nav-btn active" onclick="showView('home')"    id="nav-home">Home</button>
+      <button class="nav-btn"        onclick="showView('matches')" id="nav-matches">Matches</button>
+      <button class="nav-btn"        onclick="showView('leaderboard')" id="nav-leaderboard">Leaderboard</button>
+      <!-- shown when logged in -->
+      <button class="nav-btn"        onclick="showView('mypreds')" id="nav-mypreds" style="display:none">My Predictions</button>
+      <button class="nav-btn"        onclick="showView('admin')"   id="nav-admin"   style="display:none">Admin</button>
+      <span class="nav-user"         id="navUser"></span>
+      <button class="nav-btn accent" onclick="logout()"            id="nav-logout"  style="display:none">Logout</button>
+      <!-- shown when logged out -->
+      <button class="nav-btn"        onclick="showView('login')"   id="nav-login">Login</button>
+      <button class="nav-btn accent" onclick="showView('register')" id="nav-register">Register</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+<!-- ════════════════════════════════════════════════════
+     VIEWS
+════════════════════════════════════════════════════ -->
+
+<!-- HOME -->
+<div id="view-home" class="view">
+  <div class="hero">
+    <div class="hero-badge">Official Predictor</div>
+    <h1>FIFA World Cup <span>2026</span></h1>
+    <p>Predict match results &amp; exact scores. Compete with friends on the global leaderboard.</p>
+    <div class="hero-btns">
+      <button class="hero-btn primary"    onclick="showView('register')" id="heroRegister">Join &amp; Predict</button>
+      <button class="hero-btn secondary"  onclick="showView('matches')">View Matches</button>
+    </div>
+  </div>
+
+  <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
+    <!-- Scoring guide -->
+    <div class="section-title">Scoring System</div>
+    <div class="scoring-guide">
+      <div class="scoring-item"><span class="pts gold">3 pts</span> Correct result (Win / Draw / Loss)</div>
+      <div class="scoring-item"><span class="pts green">+2 bonus</span> Exact score match&nbsp;→&nbsp;<strong>5 pts total</strong></div>
+      <div class="scoring-item">🔒 Predictions lock <strong>1 hour</strong> before kick-off</div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="homeStats">
+      <div class="stat-card"><div class="stat-num" id="statMatches">—</div><div class="stat-lbl">Total Matches</div></div>
+      <div class="stat-card"><div class="stat-num" id="statPredictors">—</div><div class="stat-lbl">Predictors</div></div>
+      <div class="stat-card"><div class="stat-num" id="statFinished">—</div><div class="stat-lbl">Finished</div></div>
+    </div>
+
+    <!-- Mini leaderboard -->
+    <div class="section-title">Top Predictors</div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="leaderboard-table">
+        <thead><tr>
+          <th>#</th><th>Player</th>
+          <th style="text-align:right">Points</th>
+          <th style="text-align:right">Exact Scores</th>
+        </tr></thead>
+        <tbody id="homeLeaderboard"><tr><td colspan="4" class="loading-wrap"><div class="spinner"></div></td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Upcoming matches preview -->
+    <div class="section-title">Next Matches</div>
+    <div id="homeUpcoming"><div class="loading-wrap"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<!-- MATCHES -->
+<div id="view-matches" class="view" style="display:none">
+  <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
+    <div class="page-header" style="padding-top:0">
+      <h1>⚽ All Matches</h1>
+      <p>Click a match to expand and submit your prediction</p>
+    </div>
+
+    <div class="filter-bar" id="stageFilter"></div>
+    <div id="matchesList"><div class="loading-wrap"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<!-- LEADERBOARD -->
+<div id="view-leaderboard" class="view" style="display:none">
+  <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
+    <div class="page-header" style="padding-top:0">
+      <h1>🏆 Leaderboard</h1>
+      <p>Top 50 predictors ranked by points</p>
+    </div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="leaderboard-table">
+        <thead><tr>
+          <th>#</th><th>Player</th>
+          <th style="text-align:right">Pts</th>
+          <th style="text-align:right">Preds</th>
+          <th style="text-align:right">Correct</th>
+          <th style="text-align:right">Exact</th>
+        </tr></thead>
+        <tbody id="fullLeaderboard"><tr><td colspan="6" class="loading-wrap"><div class="spinner"></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- MY PREDICTIONS -->
+<div id="view-mypreds" class="view" style="display:none">
+  <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
+    <div class="page-header" style="padding-top:0">
+      <h1>My Predictions</h1>
+      <p>Track all your submitted predictions</p>
+    </div>
+    <div id="myPredsList"><div class="loading-wrap"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<!-- ADMIN -->
+<div id="view-admin" class="view" style="display:none">
+  <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
+    <div class="page-header" style="padding-top:0">
+      <h1>⚙️ Admin Panel</h1>
+      <p>Set match results to score all predictions</p>
+    </div>
+    <div id="adminMatchesList"><div class="loading-wrap"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div id="view-login" class="view" style="display:none">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <h2>⚽ Sign In</h2>
+      <p>Access your prediction account</p>
+      <div class="form-error" id="loginError"></div>
+      <div class="form-group">
+        <label>Username</label>
+        <input class="form-input" type="text" id="loginUsername" placeholder="your_username" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input class="form-input" type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+      <button class="btn-primary" onclick="doLogin()">Sign In</button>
+      <div class="auth-switch">Don't have an account? <a onclick="showView('register')">Register free</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- REGISTER -->
+<div id="view-register" class="view" style="display:none">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <h2>⚽ Create Account</h2>
+      <p>Join and start predicting WC 2026 matches</p>
+      <div class="form-error" id="registerError"></div>
+      <div class="form-group">
+        <label>Display Name</label>
+        <input class="form-input" type="text" id="regDisplayName" placeholder="Your Name" />
+      </div>
+      <div class="form-group">
+        <label>Username</label>
+        <input class="form-input" type="text" id="regUsername" placeholder="unique_username" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input class="form-input" type="email" id="regEmail" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="form-group">
+        <label>Password <span style="color:var(--muted);font-size:.8rem">(min 6 chars)</span></label>
+        <input class="form-input" type="password" id="regPassword" placeholder="••••••••" autocomplete="new-password" />
+      </div>
+      <button class="btn-primary" onclick="doRegister()">Create Account</button>
+      <div class="auth-switch">Already have an account? <a onclick="showView('login')">Sign in</a></div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

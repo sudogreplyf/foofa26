@@ -1,0 +1,19 @@
+{
+  "name": "fifa-world-cup-2026-predictor",
+  "version": "1.0.0",
+  "description": "FIFA World Cup 2026 Match Predictor - Predict scores and win/loss/draw results",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+predictor.db
+*.db-shm
+*.db-wal
+.env
