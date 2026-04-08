@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: fifa-wc2026-predictor
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        generateValue: true
+    disk:
+      name: db
+      mountPath: /data
+      sizeGB: 1

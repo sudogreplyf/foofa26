@@ -4,11 +4,15 @@ const path = require('path');
 
 let _db = null;
 
+// On Render.com, use the persistent /data disk; elsewhere use project root
+const DB_DIR  = process.env.DATA_DIR || (process.env.RENDER ? '/data' : __dirname);
+const DB_PATH = path.join(DB_DIR, 'predictor.db');
+
 async function getDb() {
   if (_db) return _db;
 
   _db = await open({
-    filename: path.join(__dirname, 'predictor.db'),
+    filename: DB_PATH,
     driver: sqlite3.Database
   });
 
