@@ -89,8 +89,8 @@
 <div id="view-matches" class="view" style="display:none">
   <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
     <div class="page-header" style="padding-top:0">
-      <h1>⚽ All Matches</h1>
-      <p>Click a match to expand and submit your prediction</p>
+      <h1>⚽ Match Dashboard</h1>
+      <p>Live matches first, then grouped by league/date for fast scanning</p>
     </div>
 
     <div class="filter-bar" id="stageFilter"></div>
@@ -136,7 +136,17 @@
   <div class="container" style="padding-top:1.5rem;padding-bottom:3rem;">
     <div class="page-header" style="padding-top:0">
       <h1>⚙️ Admin Panel</h1>
-      <p>Set match results to score all predictions</p>
+      <p>Manual sync, test-mode live events, and result scoring</p>
+    </div>
+    <div class="card" style="margin-bottom:1rem;">
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;justify-content:space-between">
+        <div style="color:var(--muted);font-size:.9rem">Admin Test Mode: validate ingestion → DB writes → UI reactivity.</div>
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+          <button class="btn-admin" onclick="adminManualSync()">🔄 Manual Sync</button>
+          <button class="btn-admin" onclick="adminMockLiveUpdate()">🧪 Mock Live Update</button>
+        </div>
+      </div>
+      <p id="adminSyncStatus" style="margin-top:.6rem;color:var(--muted);font-size:.85rem">No sync run yet.</p>
     </div>
     <div id="adminMatchesList"><div class="loading-wrap"><div class="spinner"></div></div></div>
   </div>
