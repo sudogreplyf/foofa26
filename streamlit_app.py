@@ -7,7 +7,10 @@ import streamlit as st
 import sqlite3
 import bcrypt
 import os
-from datetime import datetime, timedelta, timezone
+import random
+from datetime import datetime, timedelta
+from urllib.request import urlopen, Request
+import json
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -23,10 +26,16 @@ LOCK_MINUTES = 60  # lock predictions 1 hour before kick-off
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  .stApp { background: #0b1f35; color: #e8eef4; }
+  .stApp {
+    background: radial-gradient(circle at top left, #1f3a61 0%, #0b1f35 40%, #071221 100%);
+    color: #e8eef4;
+  }
+  .block-container { padding-top: 1.2rem; }
   .match-card {
-    background: #122840; border: 1px solid #1e3f5c; border-radius: 12px;
+    background: linear-gradient(120deg, rgba(18,40,64,.95), rgba(12,29,46,.95));
+    border: 1px solid #2f5f88; border-radius: 14px;
     padding: 1.2rem 1.5rem; margin-bottom: .8rem;
+    box-shadow: 0 10px 22px rgba(0,0,0,.25);
   }
   .match-teams { font-size: 1.2rem; font-weight: 700; text-align: center; margin: .4rem 0; }
   .badge-gold  { color: #f5a623; font-weight: 800; }
@@ -34,11 +43,21 @@ st.markdown("""
   .badge-red   { color: #ff6b7a; font-weight: 700; }
   .badge-muted { color: #8ba3bb; }
   h1, h2, h3  { color: #f5a623 !important; }
-  .stButton > button {
-    background: linear-gradient(135deg,#2563a8,#1e4f8f);
-    color: #fff; border: none; border-radius: 8px; font-weight: 700;
+  [data-testid="stMetric"] {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px;
+    padding: .75rem;
   }
-  div[data-testid="stSidebarContent"] { background: #0d2740; }
+  .stButton > button {
+    background: linear-gradient(135deg,#2563a8,#1e4f8f,#173e73);
+    color: #fff; border: none; border-radius: 8px; font-weight: 700;
+    box-shadow: 0 6px 16px rgba(0,0,0,.3);
+  }
+  .stButton > button:hover { transform: translateY(-1px); }
+  div[data-testid="stSidebarContent"] {
+    background: linear-gradient(170deg,#0d2740,#0a2035);
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -96,6 +115,19 @@ def init_db():
             FOREIGN KEY (match_id) REFERENCES matches(id),
             UNIQUE(user_id, match_id)
         );
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            reset_code  TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            used        INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_matches_stage_time ON matches(stage, match_time);
+        CREATE INDEX IF NOT EXISTS idx_matches_time ON matches(match_time);
+        CREATE INDEX IF NOT EXISTS idx_predictions_user_match ON predictions(user_id, match_id);
+        CREATE INDEX IF NOT EXISTS idx_predictions_match ON predictions(match_id, is_scored);
     """)
     db.commit()
     _seed_matches(db)
@@ -106,82 +138,118 @@ def _seed_matches(db):
     if cnt > 0:
         return
 
-    matches = [
-        # Group A
-        ('Mexico','Poland','🇲🇽','🇵🇱','2026-06-11T18:00:00','Estadio Azteca, Mexico City','Group Stage','A'),
-        ('Argentina','Iceland','🇦🇷','🇮🇸','2026-06-11T21:00:00','MetLife Stadium, New Jersey','Group Stage','A'),
-        ('Mexico','Argentina','🇲🇽','🇦🇷','2026-06-15T21:00:00','Estadio Azteca, Mexico City','Group Stage','A'),
-        ('Iceland','Poland','🇮🇸','🇵🇱','2026-06-15T18:00:00','SoFi Stadium, Los Angeles','Group Stage','A'),
-        ('Poland','Argentina','🇵🇱','🇦🇷','2026-06-19T21:00:00','MetLife Stadium, New Jersey','Group Stage','A'),
-        ('Iceland','Mexico','🇮🇸','🇲🇽','2026-06-19T21:00:00','AT&T Stadium, Dallas','Group Stage','A'),
-        # Group B
-        ('USA','Wales','🇺🇸','🏴󠁧󠁢󠁷󠁬󠁳󠁿','2026-06-12T18:00:00','SoFi Stadium, Los Angeles','Group Stage','B'),
-        ('England','Iran','🏴󠁧󠁢󠁥󠁮󠁧󠁿','🇮🇷','2026-06-12T14:00:00','AT&T Stadium, Dallas','Group Stage','B'),
-        ('USA','England','🇺🇸','🏴󠁧󠁢󠁥󠁮󠁧󠁿','2026-06-16T20:00:00','MetLife Stadium, New Jersey','Group Stage','B'),
-        ('Iran','Wales','🇮🇷','🏴󠁧󠁢󠁷󠁬󠁳󠁿','2026-06-16T14:00:00',"Levi's Stadium, San Francisco",'Group Stage','B'),
-        ('Wales','England','🏴󠁧󠁢󠁷󠁬󠁳󠁿','🏴󠁧󠁢󠁥󠁮󠁧󠁿','2026-06-20T21:00:00','Rose Bowl, Los Angeles','Group Stage','B'),
-        ('Iran','USA','🇮🇷','🇺🇸','2026-06-20T21:00:00','AT&T Stadium, Dallas','Group Stage','B'),
-        # Group C
-        ('France','Australia','🇫🇷','🇦🇺','2026-06-12T21:00:00','Hard Rock Stadium, Miami','Group Stage','C'),
-        ('Denmark','Tunisia','🇩🇰','🇹🇳','2026-06-13T14:00:00','Lumen Field, Seattle','Group Stage','C'),
-        ('France','Denmark','🇫🇷','🇩🇰','2026-06-17T17:00:00','Hard Rock Stadium, Miami','Group Stage','C'),
-        ('Tunisia','Australia','🇹🇳','🇦🇺','2026-06-17T14:00:00','SoFi Stadium, Los Angeles','Group Stage','C'),
-        ('Australia','Denmark','🇦🇺','🇩🇰','2026-06-21T20:00:00','Lumen Field, Seattle','Group Stage','C'),
-        ('Tunisia','France','🇹🇳','🇫🇷','2026-06-21T20:00:00','Hard Rock Stadium, Miami','Group Stage','C'),
-        # Group D
-        ('Spain','Costa Rica','🇪🇸','🇨🇷','2026-06-13T17:00:00','Allegiant Stadium, Las Vegas','Group Stage','D'),
-        ('Germany','Japan','🇩🇪','🇯🇵','2026-06-13T20:00:00','MetLife Stadium, New Jersey','Group Stage','D'),
-        ('Spain','Germany','🇪🇸','🇩🇪','2026-06-18T20:00:00','AT&T Stadium, Dallas','Group Stage','D'),
-        ('Japan','Costa Rica','🇯🇵','🇨🇷','2026-06-18T14:00:00',"Levi's Stadium, San Francisco",'Group Stage','D'),
-        ('Japan','Spain','🇯🇵','🇪🇸','2026-06-22T20:00:00','Rose Bowl, Los Angeles','Group Stage','D'),
-        ('Costa Rica','Germany','🇨🇷','🇩🇪','2026-06-22T20:00:00','Lumen Field, Seattle','Group Stage','D'),
-        # Group E
-        ('Brazil','Serbia','🇧🇷','🇷🇸','2026-06-14T17:00:00','AT&T Stadium, Dallas','Group Stage','E'),
-        ('Switzerland','Cameroon','🇨🇭','🇨🇲','2026-06-14T14:00:00','Hard Rock Stadium, Miami','Group Stage','E'),
-        ('Brazil','Switzerland','🇧🇷','🇨🇭','2026-06-19T17:00:00','Lumen Field, Seattle','Group Stage','E'),
-        ('Cameroon','Serbia','🇨🇲','🇷🇸','2026-06-19T14:00:00','SoFi Stadium, Los Angeles','Group Stage','E'),
-        ('Serbia','Switzerland','🇷🇸','🇨🇭','2026-06-23T20:00:00','AT&T Stadium, Dallas','Group Stage','E'),
-        ('Cameroon','Brazil','🇨🇲','🇧🇷','2026-06-23T20:00:00','Hard Rock Stadium, Miami','Group Stage','E'),
-        # Group F
-        ('Morocco','Croatia','🇲🇦','🇭🇷','2026-06-14T20:00:00','Allegiant Stadium, Las Vegas','Group Stage','F'),
-        ('Belgium','Canada','🇧🇪','🇨🇦','2026-06-15T14:00:00','BMO Field, Toronto','Group Stage','F'),
-        ('Morocco','Belgium','🇲🇦','🇧🇪','2026-06-19T14:00:00','MetLife Stadium, New Jersey','Group Stage','F'),
-        ('Canada','Croatia','🇨🇦','🇭🇷','2026-06-19T17:00:00','BMO Field, Toronto','Group Stage','F'),
-        ('Croatia','Belgium','🇭🇷','🇧🇪','2026-06-23T17:00:00','SoFi Stadium, Los Angeles','Group Stage','F'),
-        ('Canada','Morocco','🇨🇦','🇲🇦','2026-06-23T17:00:00','BMO Field, Toronto','Group Stage','F'),
-        # Group G
-        ('Portugal','Ghana','🇵🇹','🇬🇭','2026-06-15T17:00:00','Rose Bowl, Los Angeles','Group Stage','G'),
-        ('Uruguay','South Korea','🇺🇾','🇰🇷','2026-06-15T20:00:00',"Levi's Stadium, San Francisco",'Group Stage','G'),
-        ('Portugal','Uruguay','🇵🇹','🇺🇾','2026-06-20T17:00:00','Rose Bowl, Los Angeles','Group Stage','G'),
-        ('South Korea','Ghana','🇰🇷','🇬🇭','2026-06-20T14:00:00','Allegiant Stadium, Las Vegas','Group Stage','G'),
-        ('South Korea','Portugal','🇰🇷','🇵🇹','2026-06-24T20:00:00','Hard Rock Stadium, Miami','Group Stage','G'),
-        ('Ghana','Uruguay','🇬🇭','🇺🇾','2026-06-24T20:00:00','AT&T Stadium, Dallas','Group Stage','G'),
-        # Group H
-        ('Netherlands','Senegal','🇳🇱','🇸🇳','2026-06-16T17:00:00','Lumen Field, Seattle','Group Stage','H'),
-        ('Ecuador','Qatar','🇪🇨','🇶🇦','2026-06-16T14:00:00','MetLife Stadium, New Jersey','Group Stage','H'),
-        ('Netherlands','Ecuador','🇳🇱','🇪🇨','2026-06-21T17:00:00','SoFi Stadium, Los Angeles','Group Stage','H'),
-        ('Qatar','Senegal','🇶🇦','🇸🇳','2026-06-21T14:00:00','Allegiant Stadium, Las Vegas','Group Stage','H'),
-        ('Qatar','Netherlands','🇶🇦','🇳🇱','2026-06-25T20:00:00',"Levi's Stadium, San Francisco",'Group Stage','H'),
-        ('Senegal','Ecuador','🇸🇳','🇪🇨','2026-06-25T20:00:00','Hard Rock Stadium, Miami','Group Stage','H'),
-        # Knockout
-        ('1A','2B','🏆','🏆','2026-06-28T18:00:00','MetLife Stadium, New Jersey','Round of 32',None),
-        ('1C','2D','🏆','🏆','2026-06-28T22:00:00','AT&T Stadium, Dallas','Round of 32',None),
-        ('1E','2F','🏆','🏆','2026-06-29T18:00:00','SoFi Stadium, Los Angeles','Round of 32',None),
-        ('1G','2H','🏆','🏆','2026-06-29T22:00:00','Hard Rock Stadium, Miami','Round of 32',None),
-        ('W R32-1','W R32-2','🏆','🏆','2026-07-04T20:00:00','MetLife Stadium, New Jersey','Round of 16',None),
-        ('W R32-3','W R32-4','🏆','🏆','2026-07-05T20:00:00','SoFi Stadium, Los Angeles','Round of 16',None),
-        ('QF1','QF2','🏆','🏆','2026-07-08T20:00:00','AT&T Stadium, Dallas','Quarterfinal',None),
-        ('QF3','QF4','🏆','🏆','2026-07-09T20:00:00','Hard Rock Stadium, Miami','Quarterfinal',None),
-        ('SF1','SF2','🏆','🏆','2026-07-14T20:00:00','MetLife Stadium, New Jersey','Semifinal',None),
-        ('SF3','SF4','🏆','🏆','2026-07-15T20:00:00','SoFi Stadium, Los Angeles','Semifinal',None),
-        ('3rd A','3rd B','🏆','🏆','2026-07-18T18:00:00','Hard Rock Stadium, Miami','Third Place',None),
-        ('Champion 1','Champion 2','🏆','🏆','2026-07-19T18:00:00','MetLife Stadium, New Jersey','Final',None),
+    # Official tournament format: 12 groups (A-L), 72 group matches + knockout stage slots.
+    hosts = [
+        ("Estadio Azteca, Mexico City", "🇲🇽"),
+        ("MetLife Stadium, New Jersey", "🇺🇸"),
+        ("SoFi Stadium, Los Angeles", "🇺🇸"),
+        ("AT&T Stadium, Dallas", "🇺🇸"),
+        ("Hard Rock Stadium, Miami", "🇺🇸"),
+        ("BMO Field, Toronto", "🇨🇦"),
+        ("BC Place, Vancouver", "🇨🇦"),
+        ("Levi's Stadium, San Francisco", "🇺🇸"),
+        ("Lumen Field, Seattle", "🇺🇸"),
+        ("Mercedes-Benz Stadium, Atlanta", "🇺🇸"),
+        ("NRG Stadium, Houston", "🇺🇸"),
+        ("Lincoln Financial Field, Philadelphia", "🇺🇸"),
     ]
+
+    start_dt = datetime(2026, 6, 11, 18, 0)
+    matches = []
+    slot = 1
+
+    for g in "ABCDEFGHIJKL":
+        teams = [f"{g}1", f"{g}2", f"{g}3", f"{g}4"]
+        pairings = [
+            (teams[0], teams[1]), (teams[2], teams[3]),
+            (teams[0], teams[2]), (teams[1], teams[3]),
+            (teams[0], teams[3]), (teams[1], teams[2]),
+        ]
+        for home, away in pairings:
+            venue, flag = hosts[(slot - 1) % len(hosts)]
+            kickoff = (start_dt + timedelta(hours=6 * (slot - 1))).isoformat()
+            matches.append((
+                f"Group {g} - {home}",
+                f"Group {g} - {away}",
+                flag,
+                flag,
+                kickoff,
+                venue,
+                "Group Stage",
+                g,
+            ))
+            slot += 1
+
+    knockout_slots = [
+        ("R64 Slot 1", "R64 Slot 2", "Round of 64"),
+        ("R64 Slot 3", "R64 Slot 4", "Round of 64"),
+        ("R64 Slot 5", "R64 Slot 6", "Round of 64"),
+        ("R64 Slot 7", "R64 Slot 8", "Round of 64"),
+        ("R32 Slot 1", "R32 Slot 2", "Round of 32"),
+        ("R32 Slot 3", "R32 Slot 4", "Round of 32"),
+        ("R16 Slot 1", "R16 Slot 2", "Round of 16"),
+        ("R16 Slot 3", "R16 Slot 4", "Round of 16"),
+        ("QF Slot 1", "QF Slot 2", "Quarterfinal"),
+        ("QF Slot 3", "QF Slot 4", "Quarterfinal"),
+        ("SF Slot 1", "SF Slot 2", "Semifinal"),
+        ("SF Slot 3", "SF Slot 4", "Semifinal"),
+        ("Third Place Slot 1", "Third Place Slot 2", "Third Place"),
+        ("Finalist 1", "Finalist 2", "Final"),
+    ]
+    for home, away, stage in knockout_slots:
+        venue, _ = hosts[(slot - 1) % len(hosts)]
+        kickoff = (start_dt + timedelta(hours=6 * (slot - 1))).isoformat()
+        matches.append((home, away, "🏆", "🏆", kickoff, venue, stage, None))
+        slot += 1
+
     db.executemany(
         "INSERT INTO matches (home_team,away_team,home_flag,away_flag,match_time,venue,stage,group_name) VALUES (?,?,?,?,?,?,?,?)",
-        matches
+        matches,
     )
     db.commit()
+
+
+def ensure_demo_data(db):
+    existing = db.execute("SELECT COUNT(*) FROM users WHERE username LIKE 'demo_%'").fetchone()[0]
+    if existing:
+        return 0
+
+    users = []
+    for i in range(1, 6):
+        users.append((f"demo_{i}", f"demo_{i}@example.com", f"Demo Player {i}", hash_pw("demo1234")))
+    db.executemany(
+        "INSERT INTO users (username, email, display_name, password_hash) VALUES (?,?,?,?)",
+        users,
+    )
+
+    user_rows = db.execute("SELECT id FROM users WHERE username LIKE 'demo_%' ORDER BY id").fetchall()
+    finished = db.execute("SELECT id, home_score, away_score FROM matches WHERE status='finished' LIMIT 10").fetchall()
+    if not finished:
+        seed_matches = db.execute("SELECT id FROM matches ORDER BY match_time LIMIT 10").fetchall()
+        for row in seed_matches:
+            h = random.randint(0, 4)
+            a = random.randint(0, 4)
+            db.execute("UPDATE matches SET home_score=?, away_score=?, status='finished' WHERE id=?", (h, a, row["id"]))
+        finished = db.execute("SELECT id, home_score, away_score FROM matches WHERE status='finished' LIMIT 10").fetchall()
+
+    for u in user_rows:
+        for m in finished:
+            h_guess = max(0, m["home_score"] + random.choice([-1, 0, 1]))
+            a_guess = max(0, m["away_score"] + random.choice([-1, 0, 1]))
+            pred = "home" if h_guess > a_guess else "away" if a_guess > h_guess else "draw"
+            actual = "home" if m["home_score"] > m["away_score"] else "away" if m["away_score"] > m["home_score"] else "draw"
+            pts = 5 if (h_guess == m["home_score"] and a_guess == m["away_score"]) else 3 if pred == actual else 0
+            db.execute(
+                """
+                INSERT INTO predictions (user_id, match_id, predicted_result, predicted_home_score, predicted_away_score, points_earned, is_scored)
+                VALUES (?,?,?,?,?,?,1)
+                ON CONFLICT(user_id, match_id) DO NOTHING
+                """,
+                (u["id"], m["id"], pred, h_guess, a_guess, pts),
+            )
+
+    db.commit()
+    return len(user_rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -205,6 +273,64 @@ def is_open(match_time_str: str) -> bool:
         return datetime.now() < lock_at
     except Exception:
         return False
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_live_scores():
+    """Fetch live soccer scores from TheSportsDB (public test key)."""
+    try:
+        req = Request(
+            "https://www.thesportsdb.com/api/v1/json/3/livescore.php?s=Soccer",
+            headers={"User-Agent": "wc2026-predictor/1.0"},
+        )
+        with urlopen(req, timeout=6) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        events = payload.get("events") or []
+        return events
+    except Exception:
+        return []
+
+
+def create_reset_code(db, identity: str):
+    user = db.execute(
+        "SELECT id, username FROM users WHERE username=? OR email=?",
+        (identity.strip(), identity.strip().lower()),
+    ).fetchone()
+    if not user:
+        return None
+    code = f"{random.randint(100000, 999999)}"
+    expires = (datetime.utcnow() + timedelta(minutes=15)).isoformat()
+    db.execute(
+        "INSERT INTO password_resets (user_id, reset_code, expires_at) VALUES (?,?,?)",
+        (user["id"], code, expires),
+    )
+    db.commit()
+    return code
+
+
+def apply_reset_code(db, code: str, new_password: str):
+    row = db.execute(
+        """
+        SELECT pr.id, pr.user_id, pr.expires_at, pr.used
+        FROM password_resets pr
+        WHERE pr.reset_code=?
+        ORDER BY pr.id DESC LIMIT 1
+        """,
+        (code.strip(),),
+    ).fetchone()
+    if not row:
+        return False, "Invalid reset code."
+    if row["used"]:
+        return False, "Reset code already used."
+    if datetime.utcnow() > datetime.fromisoformat(row["expires_at"]):
+        return False, "Reset code expired."
+    if len(new_password) < 6:
+        return False, "Password must be at least 6 characters."
+
+    db.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pw(new_password), row["user_id"]))
+    db.execute("UPDATE password_resets SET used=1 WHERE id=?", (row["id"],))
+    db.commit()
+    return True, "Password updated. You can sign in now."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -291,6 +417,31 @@ def page_leaderboard():
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def page_live_scores():
+    st.title("📡 Live Scores")
+    st.caption("Data source: TheSportsDB public live soccer endpoint (refreshes every 30 seconds cache).")
+    if st.button("🔄 Refresh now"):
+        fetch_live_scores.clear()
+    events = fetch_live_scores()
+    if not events:
+        st.info("No live soccer events available right now.")
+        return
+    for e in events[:30]:
+        home = e.get("strHomeTeam", "Home")
+        away = e.get("strAwayTeam", "Away")
+        hs = e.get("intHomeScore", "?")
+        a_s = e.get("intAwayScore", "?")
+        league = e.get("strLeague", "Soccer")
+        progress = e.get("strProgress", "Live")
+        st.markdown(
+            f"""<div class='match-card'>
+            <b>{home} {hs} - {a_s} {away}</b><br/>
+            <span class='badge-muted'>{league}</span> · <span class='badge-gold'>{progress}</span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+
 def page_matches():
     st.title("⚽ Matches")
     db  = get_db()
@@ -303,13 +454,25 @@ def page_matches():
     if stage_choice == "All":
         matches = db.execute("SELECT * FROM matches ORDER BY match_time").fetchall()
     else:
-        matches = db.execute(
-            "SELECT * FROM matches WHERE stage=? ORDER BY match_time", (stage_choice,)
-        ).fetchall()
+        matches = db.execute("SELECT * FROM matches WHERE stage=? ORDER BY match_time", (stage_choice,)).fetchall()
 
     if not matches:
         st.info("No matches found.")
         return
+
+    user_predictions = {}
+    if u:
+        pred_rows = db.execute(
+            """
+            SELECT * FROM predictions
+            WHERE user_id=? AND match_id IN ({})
+            """.format(",".join("?" * len(matches))),
+            (u["id"], *[m["id"] for m in matches]),
+        ).fetchall()
+        user_predictions = {p["match_id"]: p for p in pred_rows}
+
+    live_events = fetch_live_scores()
+    live_lookup = {f"{e.get('strHomeTeam','')} vs {e.get('strAwayTeam','')}": e for e in live_events}
 
     for m in matches:
         with st.expander(
@@ -326,11 +489,13 @@ def page_matches():
                 st.success(f"Final Score: **{m['home_team']} {m['home_score']} – {m['away_score']} {m['away_team']}**")
 
             # Show existing prediction
+            live_key = f"{m['home_team']} vs {m['away_team']}"
+            if live_key in live_lookup:
+                e = live_lookup[live_key]
+                st.warning(f"🔴 LIVE: {e.get('intHomeScore','?')} - {e.get('intAwayScore','?')} ({e.get('strProgress','in play')})")
+
             if u:
-                existing = db.execute(
-                    "SELECT * FROM predictions WHERE user_id=? AND match_id=?",
-                    (u["id"], m["id"])
-                ).fetchone()
+                existing = user_predictions.get(m["id"])
 
                 if existing:
                     res_label = {"home": f"{m['home_team']} win", "draw": "Draw", "away": f"{m['away_team']} win"}.get(existing["predicted_result"], "?")
@@ -357,10 +522,7 @@ def page_matches():
                     f"✈️ {m['away_team']} wins":  "away",
                 }
 
-                existing_pred = db.execute(
-                    "SELECT * FROM predictions WHERE user_id=? AND match_id=?",
-                    (u["id"], m["id"])
-                ).fetchone()
+                existing_pred = user_predictions.get(m["id"])
                 default_label = None
                 if existing_pred:
                     for lbl, val in result_options.items():
@@ -504,6 +666,13 @@ def page_admin():
     st.title("⚙️ Admin Panel")
     st.write("Enter final scores to auto-score all user predictions.")
     db = get_db()
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🧪 Generate demo test data"):
+            created = ensure_demo_data(db)
+            st.success(f"Demo data ready. New demo users created: {created}.")
+    with c2:
+        st.info("Tip: use Demo users (demo_1..demo_5 / demo1234) for quick testing.")
 
     stage_filter = st.selectbox(
         "Show stage",
@@ -580,6 +749,20 @@ def page_login():
             else:
                 st.error("Invalid username or password.")
 
+        with st.expander("Forgot password?"):
+            identity = st.text_input("Username or email", key="fp_identity")
+            if st.button("Send reset code", key="fp_send", use_container_width=True):
+                code = create_reset_code(get_db(), identity)
+                if code:
+                    st.success(f"Reset code generated: `{code}` (demo mode display).")
+                else:
+                    st.error("No user found with that username/email.")
+            code = st.text_input("Reset code", key="fp_code")
+            new_pw = st.text_input("New password", type="password", key="fp_new_pw")
+            if st.button("Reset password", key="fp_apply", use_container_width=True):
+                ok, msg = apply_reset_code(get_db(), code, new_pw)
+                st.success(msg) if ok else st.error(msg)
+
         st.write("Don't have an account? Switch to **Register** in the sidebar.")
 
 
@@ -644,6 +827,7 @@ def sidebar():
         pages = {
             "🏠 Home":           "home",
             "⚽ Matches":        "matches",
+            "📡 Live Scores":    "live",
             "🏆 Leaderboard":    "leaderboard",
         }
         if u:
@@ -665,6 +849,7 @@ def main():
 
     if page == "home":      page_home()
     elif page == "matches": page_matches()
+    elif page == "live":    page_live_scores()
     elif page == "leaderboard": page_leaderboard()
     elif page == "mypreds": page_my_predictions()
     elif page == "admin":   page_admin()

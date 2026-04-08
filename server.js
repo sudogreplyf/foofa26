@@ -30,6 +30,13 @@ app.get('/api/live-stream', (req, res) => {
 app.use('/api/auth',        require('./routes/auth'));
 app.use('/api/matches',     require('./routes/matches'));
 app.use('/api/predictions', require('./routes/predictions'));
+app.get('/api/meta', (_req, res) => {
+  res.json({
+    app: pkg.name,
+    version: process.env.RELEASE_VERSION || pkg.version,
+    deployed_at: process.env.RELEASE_DATE || new Date().toISOString()
+  });
+});
 
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('*', (_req, res) =>

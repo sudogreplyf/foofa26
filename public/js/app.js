@@ -196,6 +196,7 @@ function buildStageTabs() {
     groupTabsEl.classList.add('hidden');
   }
 }
+function filterStage(stage) { activeStage = stage; buildStageFilter(); renderMatchList(); }
 
 function setStage(s) {
   activeStage = s;
