@@ -48,3 +48,12 @@ On startup the server attempts an external sync. If unavailable, the app remains
 - `EXTERNAL_SYNC_INTERVAL_MS` (default `120000`)
 - `PORT` (default `3000`)
 - `JWT_SECRET`
+
+## Netlify routing fix
+
+If you deploy only the `public/` site to Netlify, add SPA rewrites so deep links do not return Netlify's default 404 page:
+
+- `netlify.toml` with a catch-all `200` redirect to `/index.html`
+- `public/_redirects` containing `/* /index.html 200`
+
+This ensures routes handled by the browser app still load correctly on refresh/direct URL access.

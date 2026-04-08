@@ -1,0 +1,8 @@
+[build]
+  publish = "public"
+
+# Ensure direct visits to client-side routes resolve to the SPA entry point.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
